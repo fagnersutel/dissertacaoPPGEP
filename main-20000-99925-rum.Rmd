@@ -1,0 +1,1184 @@
+---
+title: ""
+output:
+  html_document:
+    df_print: paged
+    number_sections: yes
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+  word_document:
+    toc: yes
+---
+<style >
+      body {
+        text-align: justify;
+        font-size: 2em;
+      }
+      titulo{
+        text-align: center;
+      }
+      h1 {
+        font-size: 30px;
+        text-align: ;
+      }
+      h2 {
+        font-size: 25px;
+        text-align: ;
+      }
+      h3 {
+        font-size: 22px;
+        text-align: ;
+      }
+      .main-container {
+        max-width: 1800px  !important;
+        margin-left: auto;
+        margin-right: auto;
+      }
+      .figure img{
+      border-style: dotted !important;
+      border-color:#333 !important;
+      margin-left: auto;
+        margin-right: auto;
+      }
+      </style> 
+
+# Clusters de Acidentes por Affinity Propagation
+
+```{r bibliotecas, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+library(leaflet.extras)
+library(apcluster)  
+library(magrittr)
+library(dplyr)   
+library(leaflet)
+library(rgdal)
+library(rgeos)
+library(geojsonio)
+library(mapview)
+library(contoureR)
+library(geosphere)
+library(cluster)
+library(sp)
+library(rgdal)
+library(RColorBrewer)
+library(sp)
+library(foreign)
+library(car)
+library(lubridate)
+library(tidyr)
+library(stringr)
+```
+
+## Carga de Dados  
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#dados = read.dbf("/Users/fagne/OneDrive/r-files/CIET/acidentes2020/_Base/acidentes_2014a2020_WGS84.dbf")
+#dados = read.dbf("/Users/fsmoura/OneDrive/r-files/CIET/acidentes2020/_Base/acidentes_2014a2020_WGS84.dbf")
+#dados = read.dbf("/Users/fsmoura/OneDrive/r-files/CIET/acidentes2020/_Base/mercator_32722_2014_2019.dbf")
+```
+
+
+```{r load, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+dados = read.dbf("~/OneDrive/r-files/CIET/acidentes2020/_Base/acidentes_2014a2020_WGS84.dbf")
+dados = dados[dados$ANO > 2014, ]
+sort(unique(dados$ANO))
+anos = length(unique(dados$ANO))
+anos
+class(dados)
+x2 <- cbind(dados$LONGITUDE, dados$LATITUDE)
+x2 <- x2[complete.cases(x2), ]
+dim(x2)
+head(x2)
+```
+
+## Preparação 
+
+Os dados já foram previamente clusterizados conforme o documento https://rpubs.com/fagnersutel/837844. Dessa maneira, as seçõs de preparação e treino não reprocessam os dados e apenas fazem a carga do modelo previamente obtido: 
+```{r segmentacao, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+x1 <- x2
+```
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#x2 <- x2[sample(nrow(x2), round(nrow(dados)*0.25, 0)), ]
+```
+
+
+```{r segmentacaoContinua, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+load("data/AZURE/x2-20000-99925.rda")
+load("data/AZURE/apres2-20000-99925.rda")
+names(x2) = c("LONGITUDE", "LATITUDE" )
+head(x2)
+dim(x1)
+dim(x2)
+```
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#save(x2, file = "data/x2-20000-90.rda")
+```
+
+## Treino 
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#apres <- apcluster(negDistMat(r=2), x2, q=0.999)
+#save(apres, file = "data/apres2-20000-90.rda")
+```
+
+
+```{r treino, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+plot(apres, x2)
+summary(apres)
+```
+
+## Obtenção de Centróides  
+
+```{r centroides, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+centroides = unique(apres@exemplars)
+poly = data.frame()
+centr_indice = 0
+for (i in centroides){
+  centr_indice = centr_indice + 1
+  centr_lat=x2[i,1]
+  centr_lon=x2[i,2]
+  poly = rbind(poly, c(centr_lat, centr_lon, centr_indice))
+}
+names(poly) = c("Lat", "Lon", "Cluster")
+#head(poly)
+dim(poly)
+exemplars = poly
+frame = exemplars
+```
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#save(exemplars, file = "data/exemplars-20000-90.rda")
+```
+
+## Classificação Global 
+
+```{r precicaoTotal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+predict.apcluster <- function(s, exemplars, newdata){
+  simMat <- s(rbind(exemplars, newdata), sel=(1:nrow(newdata)) + nrow(exemplars))[1:nrow(exemplars), ]
+  unname(apply(simMat, 2, which.max))
+}
+resultado <- list()
+dados$cluster = 0
+for(i in seq(from=1, to=length(dados$ID)-1000, by=1000)){
+  inicio = i
+  final = i+999
+  resultado = predict.apcluster(negDistMat(r=2), x2[apres@exemplars, ],  dados[inicio:final, 2:3])
+  dados$cluster[inicio:final] = resultado
+}
+controle = length(dados$cluster)  - final
+resultado = predict.apcluster(negDistMat(r=2), x2[apres@exemplars, ],  dados[(final + 1):length(dados$cluster), 2:3])
+dados$cluster[(final + 1):length(dados$cluster)] = resultado
+#head(dados)
+#tail(dados)
+```
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#save(dados, file = "data/acidentes-20000-90.rda")
+```
+
+## Acidentes por Cluster
+
+```{r plotagem, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+pal <- colorFactor(
+  palette = 'Dark2',
+  domain = dados$cluster
+)
+leaflet(dados) %>%
+   addTiles(group="Mapa") %>% 
+   addCircles(group="Acidentes", ~LONGITUDE, ~LATITUDE, weight = 0.1, radius=7, color=~pal(cluster),
+              stroke = TRUE, fillOpacity = 0.8, popup=~paste("Cluster Nº: ", cluster,  
+             "<br>Ano: ", ANO, "<br>Tipo: ", TIPO_ACID, "<br>Local: ", LOG1,  "<br>UPS: ", UPS,   sep = " ")) %>% 
+   addLegend(group="Legenda", "topright", colors= "", labels=paste("Classified into ", summary(apres)[1], "clusters"), title="Accidents in Porto Alegre") %>% 
+   addProviderTiles(providers$CartoDB)
+```
+
+## Enriquecimento Informacional 
+Nessa etapa são calculados atributos como área de polígonos, acidentes por cluster
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#rm(apres)
+```
+
+
+```{r enriquecimentoInfos01, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+clusters_encontrados = sort(unique(dados$cluster))
+parq = dados
+poly = data.frame()
+total = 0
+for (i in clusters_encontrados){
+  temp = parq[parq$"cluster" == i,  ]
+  ch1 = convexHullAM_Indexes(temp[,2],temp[,3], includeColinear=FALSE,zeroBased = FALSE)
+  poligono = temp[ch1, 2:3 ]
+  area <- geosphere::areaPolygon(x = poligono)
+  acidentes = nrow(temp)
+  pol = temp
+  coordinates(pol) = ~LONGITUDE+LATITUDE
+  centr_lat=gCentroid(pol, byid=FALSE)$x
+  centr_lon=gCentroid(pol, byid=FALSE)$y
+  total = total+1
+  if(nrow(temp) >= anos) {
+    for (ii in ch1) {
+    polying = temp[ii,]
+    polying$area = area * 10^-6
+    polying$acidentes = acidentes
+    polying$centroide_lat = centr_lat
+    polying$centroide_lon = centr_lon
+    poly = rbind(poly, polying)
+    }  
+  }
+}
+total
+length(unique(poly$cluster))
+```
+
+
+```{r enriquecimentoInfos02, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+mean(poly$area)
+median(poly$area)
+minimoquantil = quantile(poly$area, probs = 0.01)
+maximoquantil = quantile(poly$area, probs = 0.90)
+quantile(poly$area, probs = c(0.01, 0.25, 0.5,0.75,0.99))
+poly = poly[(poly$area < maximoquantil) & (poly$area > minimoquantil), ]
+dim(poly)
+class(poly)
+pol = poly
+save(poly, file = "polyoriginal.Rda")
+```
+
+## Combinando Informações  
+
+Nessa etapa os dados de acidentes contidos no data set original são combinados com dados de clusters
+
+```{r binds, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+dados = poly[,c(1:9, 11:13,38,41,44:48)]
+names(dados) = c("ID","lat", "lon", "log1", "Log2", "Pred", "Local", "Tipo", "Via", "Data", "Dia", "Hora", 
+                 "Fx_horaria","UPS", "box_id", "Area", "Acidentes", "CentLon", "CentLat")
+dados$id = (dados$box_id * 11)
+dados$group = dados$id
+head(dados)
+nrow(dados)
+dadostemp = dados[, c(15:21)]
+coordinates(dados)=c("lat","lon")
+df = dados
+length(df)
+data <- data.frame(box_id=unique(df$box_id),row.names=unique(df$id))
+nrow(data)
+dadostemp2 = dados[!duplicated(dados$id),]
+data = as.data.frame(cbind(data, dadostemp2@data))
+```
+
+## Criação de Polígonos  
+
+São criados polígonos delimitados pelos limites externos dos clusters.
+
+
+```{r funcaoPoligonos, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+points2polygons <- function(df,data) {
+  get.grpPoly <- function(group,ID,df) {
+    Polygon(coordinates(df[df$id==ID & df$group==group,]))
+  }
+  get.spPoly  <- function(ID,df) {
+    Polygons(lapply(unique(df[df$id==ID,]$group),get.grpPoly,ID,df),ID)
+  }
+  spPolygons  <- SpatialPolygons(lapply(unique(df$id),get.spPoly,df))
+  SpatialPolygonsDataFrame(spPolygons,match.ID=T,data=data)
+}
+data$Log2 = NULL
+spDF <- points2polygons(df,data)
+spDF
+length(spDF)
+class(spDF)
+spDF@data$group = 1
+spDF@data$box_id = NULL
+dim(spDF@data)
+dadostemp = unique(dadostemp)
+spDF@data = merge(spDF@data, dadostemp, by = "box_id")
+dim(spDF@data)
+plot(spDF,col=spDF$box_id+1)
+library(rgdal)
+rgdal::writeOGR(obj = spDF,
+                dsn = "data/myParq999-25.json",
+                layer = "myParq",
+                driver = "GeoJSON",
+                overwrite_layer = TRUE)
+```
+
+Acidentes por Cluster 
+```{r salvaPoligonos, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#carregamos os dados SpatialPolygonsDataFrame
+parqs <- geojsonio::geojson_read("data/myParq999-25.json", what = "sp")
+dim(parqs)
+library(raster)
+projection(parqs)
+```
+
+
+```{r , echo=T, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+library(mapview)
+mapviewPalette(name = "Viridis")
+library(RColorBrewer)
+mapview(parqs, zcol = "Acidentes.x", col.regions=brewer.pal(9, "YlOrRd"))
+```
+
+Acidentes por m2
+```{r salvaPoligonosm2, echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+parqs@data$densidade = (parqs@data$Acidentes.x/parqs@data$Area.x)*1000000
+#mapview(parqs, zcol = "densidade", col.regions=brewer.pal(9, "YlOrRd"))
+```
+
+Acidentes por poligono
+
+```{r histogramaAcidentes, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+hist(parqs@data$Acidentes.x, col = "magenta")
+quantile(parqs@data$Acidentes.x,  probs = c(0.1, 0.25, 0.95, 0.99, 1))
+```
+
+Acidentes por KM2
+
+
+
+```{r histogramaDensidade, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+hist(parqs@data$densidade, col = "orange")
+```
+
+Areas 
+```{r areas, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+options(scipen = 999)
+quantile(parqs@data$Area.x,  probs = c(0.1, 0.25, 0.95, 1))
+```
+Locais mais densos 
+```{r locaisMaisDensos, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+quantile(parqs$densidade, probs = 0.99)
+temp = parqs[parqs$densidade > quantile(parqs$densidade, probs = 0.99), ]
+#mapview(temp, zcol = "densidade")
+```
+
+## Projeção de Dados
+
+OS dados são reprojetados para Mercator afim de permitir que se calcule a distancia entre centróidos de clusters em metros. 
+```{r, echo = FALSE}
+# https://gis.stackexchange.com/questions/19064/opening-shapefile-in-r
+```
+
+
+
+```{r distanciaMatrizVizinhanca, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+frame = frame[, 1:2]
+names(frame) = c("lon", "lat")
+library(fossil)
+distM <- as.matrix( fossil::earth.dist(frame))
+a = as.numeric(unlist(lapply(1:nrow(distM), function(x) mean(distM[x, order(distM[x, ])[2:11]]))))
+round(mean(a)*1000,0)
+length(a)
+```
+
+
+```{r matrizVizinhos, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+projection(parqs)
+parqstemp = parqs
+require(sf)
+shape <- read_sf(dsn = ".", layer = "mercator_32722_2014_2019")
+projection(shape)
+projection(parqstemp) = projection(shape)
+
+ccods = coordinates(parqs)
+temps = as.data.frame(ccods)
+cord.dec = SpatialPoints(cbind(temps$V1, temps$V2), proj4string=CRS("+proj=longlat"))
+cord.UTM <- spTransform(cord.dec, CRS("+init=epsg:32722"))
+ccods = as.data.frame(cord.UTM)
+points = cbind(ccods[,1],ccods[,2])
+head(points)
+library(spdep)
+distNeighbors = round(mean(a)*1000,0)  #318 #400
+dnb = dnearneigh(points,0,distNeighbors)
+class(dnb)
+subsets = as.data.frame(matrix(dnb))
+class(subsets)
+subsets = subsets$V1
+length(subsets)
+parqs$n = 1
+sub = which(subsets == '0')
+sub
+parqs$n[sub] = 0
+length(parqs)
+parqs = parqs[parqs$n > 0,]
+length(parqs)
+length(dnb)
+ccods = ccods[-sub, ]
+dim(ccods)
+points = cbind(ccods[,1],ccods[,2])
+dnb = dnearneigh(points,0,distNeighbors)
+dnb
+length(dnb)
+```
+
+## Matriz de Vizinhanca
+
+É criada a matriz de vizinhança de clusters para calcular suas associações espaciais. 
+
+### Matriz Binária  
+```{r matrizBinaria, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+W.Bin= nb2mat(neighbours = dnb, style = "B")
+```
+
+### Matriz Normalizada  
+
+```{r matrizNormalizada, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+W.Normal= nb2mat(neighbours = dnb, style = "W")
+```
+
+## KNN
+
+```{r knn, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+vizinhos_4 <- knearneigh(points, k = 4)
+class(vizinhos_4)
+head(vizinhos_4$nn)
+vizinhanca_4 <- knn2nb(vizinhos_4)
+class(vizinhanca_4)
+```
+
+## Preparação para Análise Global e Local 
+
+```{r preparacaoGlobolLocal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+mv_simpl = st_as_sf(parqs)
+#plot(mv_simpl)
+class(mv_simpl)
+library(dplyr)
+mv_simpl =  mv_simpl %>% dplyr::select(Acidentes.y)
+```
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#mv_simpl <- st_simplify(mv_simpl, preserveTopology = FALSE,                  dTolerance = 1)
+```
+
+
+```{r preparacaoGlobolLocalContinuação, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+class(mv_simpl)
+mapview::mapview(mv_simpl)
+sf::sf_use_s2(FALSE)#trips and tiks
+mv_simpl = st_as_sf(mv_simpl)
+vizinhanca_neig <- poly2nb(mv_simpl)
+ShapeNEIG = parqs
+ShapeNEIG$vizinhos = card(vizinhanca_neig)
+ShapeNEIG <- subset(ShapeNEIG, parqs$vizinhos != 0)
+```
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#vizinhanca2neig <- poly2nb(ShapeNEIG)
+```
+
+## Calculando o Índice de Moran Global  
+
+Os índices de autocorrelção espacial global calculados pelos testes de normalidade e permutação.  
+
+### Pelo teste de Normalidade  
+```{r GlobalMoram, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+moran.test(parqs$Acidentes.y,listw=nb2listw(dnb, style = "W"), randomisation= FALSE)
+```
+
+### Pelo teste de Permutação  ou Teste de pseudo-significˆancia 
+
+```{r MoramPermutacao, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+ moran.test(parqs$Acidentes.y,listw=nb2listw(dnb, style = "W"), randomisation= TRUE)
+```
+
+### Por simulação de Monte-Carlo   
+
+```{r MoramMonteCarlo, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+moran.mc(parqs$Acidentes.y, listw=nb2listw(dnb, style = "W"), nsim=999)
+```
+
+### Pelo teste de Permutação
+
+Diferente dos demais testes globais  o teste para o EBI é exclusivo para taxas e tem-se apenas a opção de teste da permutação
+```{r EmpircalBaiesMoramPErmutacao, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#EBImoran.mc(parqs$Acidentes.y,parqs$Area.y,
+ #           nb2listw(dnb, style="B", zero.policy=TRUE), nsim=999, zero.policy=TRUE)
+```
+
+### Por simulação de Monte-Carlo 
+
+
+```{r MoramMC, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+shapeCG.p=parqs$Acidentes.y/parqs$Area.y
+#moran.mc(shapeCG.p, nb2listw(dnb, style="B", zero.policy=TRUE),
+#         nsim=999, zero.policy=TRUE)
+```
+
+## Calculando a Estatística C de Geary Global  
+### Pelo teste de Normalidade  
+
+```{r gearyNormalidade, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+geary.test(parqs$Acidentes.y, listw=nb2listw(dnb, style = "W"), randomisation= FALSE)
+```
+
+### Pelo teste de Permutação   
+```{r GearyPermutacao, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+geary.test(parqs$Acidentes.y, listw=nb2listw(dnb, style = "W"), randomisation=TRUE)
+```
+
+### Por simulação de Monte-Carlo  
+
+```{r GearyMC, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+geary.mc(parqs$Acidentes.y, listw=nb2listw(dnb, style = "W"),nsim=999)
+```
+
+## Calculando Índice de Getis e Ord Global  
+
+Getis-Ord é um indicador que mede a concentração local de uma variável de atributo distribuída espacialmente  
+
+```{r GetisOtdGlobal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+globalG.test(parqs$Acidentes.y, nb2listw(dnb, style="B"))
+```
+
+## Getis e Ord Local  
+
+```{r GetisOrdLocal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+localG(parqs$Acidentes.y, nb2listw(dnb, style="B"), zero.policy=NULL, spChk=NULL, return_internals=FALSE)[1:50]
+```
+
+## Moran Local  
+
+Todas as análises feitas até o momento foram de escala global. No entanto, é necessário que seja feita também uma análise local do estudo. Essa análise pode ser feita pelo índice local de autocorrelaçãoo espacial (LISA). Para isso é preciso calcular o índice de Moran local.
+
+```{r MoranLocal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+ShapePB.mloc <- localmoran(parqs$Acidentes.y, listw=nb2listw(dnb, style="W")) 
+head(ShapePB.mloc, 10)
+write.csv2(ShapePB.mloc, file = "ShapePBmloc.csv")
+```
+
+## Mapa das probabilidades (Signific?ncias do I de Moral Local)  
+
+Por meio dos valor-p do éndice de Moran local é possível construir um mapa de probabilidades.
+
+```{r PValores, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+library(classInt)
+INT4 <- classIntervals(ShapePB.mloc[,5], style="fixed", 
+                       fixedBreaks=c(0,0.01, 0.05, 0.10))
+CORES.4 <- c(rev(brewer.pal(3, "Reds")), brewer.pal(3, "Blues"))
+COL4 <- findColours(INT4, CORES.4)
+parqs$COL = COL4  
+parqs$p_valor = ifelse(parqs$COL == "#DE2D26", "[0,0.01)", ifelse(parqs$COL == "#EEE5E4", "[0.01,0.05)", "[0.05,0.1]"))
+plot(parqs, col=COL4)
+title("P-valores do I de Moran Local por Distäncia de Centróides")
+TB4 <- attr(COL4, "table")
+legtext <- paste(names(TB4))
+legend("bottomright", fill=attr(COL4, "palette"), legend=legtext, 
+       bty="n", cex=0.7, y.inter=0.7)
+```
+
+
+```{r mapaPValores, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="P-Valores", out.width = '100%'}
+APLs = parqs
+colnames(APLs@data)[28] = "P-value"
+mapview(APLs, zcol = "P-value", col.regions=c("red", "orange", "gray"))
+```
+
+```{r mapaPValores2, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+temp = parqs[parqs$p_valor != "[0.05,0.1]", ]
+mapview(temp, zcol = "p_valor", col.regions=c("red", "orange"))
+```
+
+### Montando matrix W de vizinhança
+
+```{r MatrizWN, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+ShapeCG.nb1.mat <- nb2mat(dnb)
+```
+
+### Incidência de acidentes padronizada  
+
+```{r IncidenciaPadronizada, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+Acidentes_SD <- scale(parqs$Acidentes.y)
+```
+
+### Média das incidências de acedentes padronizada   
+
+```{r MediaPadronizada, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+Acidentes_W <- ShapeCG.nb1.mat %*% Acidentes_SD
+```
+
+# Diagrama de espalhamento de Moran  
+
+
+
+
+```{r DiagramaEspalhamentoMoran, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+plot(Acidentes_SD, Acidentes_W,xlab="Normalized Values (Z)",ylab="Average of Normalized Neighbors (WZ)")
+abline(v=0, h=0)
+title("Diagrama de Espalhamento de Moran por Distancia de Centróides")
+Q <- vector(mode = "numeric", length = nrow(ShapePB.mloc))
+Q[(Acidentes_SD>0  & Acidentes_W > 0)] <- 1            
+Q[(Acidentes_SD<0  & Acidentes_W < 0)] <- 2
+Q[(Acidentes_SD>=0 & Acidentes_W < 0)] <- 3
+Q[(Acidentes_SD<0  & Acidentes_W >= 0)]<- 4
+signif=0.05
+parqs$Q = Q
+```
+
+####  Quadrantes
+
+```{r quadrantes, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+table(Q)
+```
+
+#  Mapa LISA
+
+```{r MapaLISA, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+Q[ShapePB.mloc[,5]>signif]<-5
+CORES.5 <- c("blue", "green" , "red", "yellow", "gray", rgb(0.95,0.95,0.95))
+#CORES.5 <- c(1:5, rgb(0.95,0.95,0.95))
+parqs$cores5Q = CORES.5[Q]
+plot(parqs, col=CORES.5[Q])
+title("Mapa LISA por Distancia Centroides")
+legend("bottomright", c("Q1(+/+)", "Q2(-/-)", "Q3(+/-)", "Q4(-/+)","NS"), 
+       fill=CORES.5)
+
+CORES.5[Q][1:5]
+head(CORES.5[Q])
+```
+
+
+```{r mapafinal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+parqs$cores5 =  ifelse(parqs$cores5Q == "blue", "H-H", ifelse(parqs$cores5Q == "green", "L-L", 
+            ifelse(parqs$cores5Q == "red", "H-L", ifelse(parqs$cores5Q == "yellow", "L-H", "N-S"))))
+APLs = parqs
+colnames(APLs@data)[31] = "Relationships"
+mapview(APLs, zcol = "Relationships", col.regions=c("red", "orange", "green", "yellow", "grey"))
+```
+
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+load("parq-99925.Rda")
+load("temp_99925.Rda")
+```
+
+
+```{r , echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+APLs = parqs[parqs$cores5 == "H-H", ]
+colnames(APLs@data)[31] = "Relationships"
+mapview(APLs, zcol = "Relationships", col.regions=c("red", "orange", "green", "yellow", "grey"))
+```
+
+
+```{r , echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+mapview(APLs, zcol = "Relationships", col.regions=c("red", "orange", "green", "yellow", "grey"))
+```
+
+
+```{r , echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+mapview(temp, zcol = "p_valor", col.regions=c("red", "blue"))
+```
+
+# Análise longitudinal
+
+```{r , echo=F, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+#aa = parq[parq$cluster == 3622,]
+#aa = parq[parq$cluster == 2267,]
+#aa = parq[parq$cluster == 2164,]
+#aa = parq[parq$cluster == 108,]
+```
+
+
+```{r , echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+aa = parq[parq$cluster == 2699,]
+aa = parq
+library(lubridate)
+aa$date = dmy(aa$DATA)
+library(changepoint)
+library(tidyverse)
+
+df = aa %>%
+  group_by(ANO, MES) %>%
+  summarise(Total=n(),
+            UPS=sum(UPS)) 
+head(df)
+```
+
+## Variação Anual 
+
+```{r , echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+dfanual = aa %>%
+  group_by(ANO) %>%
+  summarise(Total=n(),
+            UPS=sum(UPS)) 
+
+dfanual = dfanual %>% fill(ANO, .direction = "down") %>%
+  mutate(VariacaoAbsoluta = as.numeric(formatC((Total - lag(Total))*100/lag(Total), digits = 2)),
+         VariacaoUPS = as.numeric(formatC((UPS - lag(UPS))*100/lag(UPS), digits = 2)))
+dfanual
+```
+
+
+```{r , echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+dfanual <- dfanual %>% 
+  group_by(ANO) %>% 
+  mutate(
+    VariacaoAcumuladaAcidentes = cumprod((VariacaoAbsoluta/100)+1)-1,
+    VariacaoAcumuladaUPS = cumprod((UPS/100)+1)-1
+  )
+dfanual
+```
+
+## Variação Acumulada  
+
+```{r , echo=TRUE, message=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+glimpse(dfanual)
+dfanual = dfanual %>% fill(ANO, .direction = "down") %>%
+  mutate(
+    Variacao = formatC((Total - lag(Total))*100/lag(Total), digits = 2)
+    )
+
+dfanual
+```
+
+
+```{r , echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+df$date = as.Date(paste(df$ANO, df$MES, "01", sep = "-"))
+df$date = as.character(df$date)
+df$ANO = NULL
+df$MES = NULL
+df$UPS = NULL
+data_ini = as.Date(paste(year(min(df$date)), "01-01",sep = "-"))
+data_fim = as.Date(paste(year(max(df$date)), "12-01",sep = "-"))
+df = df %>%
+  mutate(date = as.Date(date), 
+         date = as.Date(format(date, "%Y-%m-01"))) %>%
+  tidyr::complete(date = seq(data_ini, data_fim, "1 month"))
+df$Total =  df$Total %>% replace_na(0)
+```
+
+
+```{r criaDF, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+df$date = as.Date(df$date)
+passageiros = ts(df$Total, start=c(min(df$date)), frequency=12)
+tamanho = length(passageiros)
+passageiros = as.data.frame(t(matrix(passageiros, 12)))
+maximo = (nrow(passageiros)*ncol(passageiros))
+start = maximo-tamanho
+start = ncol(passageiros)-start
+passageiros[nrow(passageiros), start:ncol(passageiros)] = 0
+names(passageiros) = paste(c("jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"), rep("01", 12), sep = "-")
+passageiros$ano = year(data_ini):year(data_fim)
+passageiros
+```
+
+
+```{r rehapeMelt, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+library(reshape2)
+test_data_long <- melt(passageiros, id="ano")  
+test_data_long$date <- paste(test_data_long$ano, test_data_long$variable, sep = "-")
+test_data_long$variable <- as.Date(parse_date(test_data_long$date,"%Y-%b-%d",locale=locale("pt")))
+test_data_long <- test_data_long[order(test_data_long$variable),]
+test_data_long$ano = NULL
+test_data_long$date = NULL
+test_data_long = test_data_long[!is.na(test_data_long$value), ]
+test_data_long$value = as.numeric(test_data_long$value)
+test_data_long$value = round(test_data_long$value, 0)
+head(test_data_long)
+```
+
+
+```{r serieGlobal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+library(data.table)
+require(scales)
+p = ggplot(test_data_long, aes(x=variable, y=value))+
+  geom_line(size=.8) + 
+  scale_x_date(breaks = date_breaks("6 months"),
+               labels = date_format("%Y/%m"))+
+  theme(axis.text.x=element_text(angle=45, hjust=1),
+        plot.title = element_text(size=10, face='bold'))+
+  labs(x='Ano', y='Acidentes (Mês)',
+       title='Acidentes',
+       caption='Fonte: EPTC')
+p
+```
+
+## Análise Temporal 
+```{r limparMemoria, echo=FALSE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+rm(apres)
+rm(x1)
+rm(x2)
+rm(exemplars)
+rm(poly)
+rm(df)
+rm(df1)
+rm(dnb)
+rm(polying)
+rm(Acidentes_SD)
+rm(Acidentes_W)
+rm(ccods)
+rm()
+rm(dadostemp)
+rm(dadostemp2)
+rm(data)
+rm(shape)
+rm(ShapeCG.nb1.mat)
+rm(vizinhanca_4)
+rm(vizinhanca_neig)
+rm(vizinhanca_4)
+rm(W.Bin)
+rm(W.Normal)
+rm(subsets)
+rm(points)
+rm(centroides)
+rm(clusters_encontrados)
+rm(cores5)
+rm(cores5Q)
+rm()
+rm()
+```
+
+
+```{r tsfinal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+passageiros = as.ts(read.zoo(test_data_long, FUN = as.yearmon))
+plot(decompose(passageiros, type = "m"))
+```
+
+## Change Point Pattern  
+
+```{r serieLocal, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+nomes = c("x", "y")
+df = test_data_long
+names(df) = nomes
+```
+
+
+```{r BinSeg, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+fit_changepointBINSEG = cpt.mean(df$y, method = "BinSeg", Q=5)
+```
+
+
+```{r PELT, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+fit_changepointPELT = cpt.mean(df$y, method = "PELT")
+```
+
+
+```{r AMOC, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+fit_changepointAMOC = cpt.mean(df$y, method = "AMOC")
+```
+
+
+
+
+```{r SegNeigh, echo=TRUE, message=FALSE,warning=FALSE, fig.cap="", out.width = '100%'}
+fit_changepointSEGN = cpt.mean(df$y, method = "SegNeigh", pen.value = 0.05, penalty = "AIC")
+```
+
+
+
+```{r plotChangePoint, echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+par(mfrow=c(2,2))
+plot(fit_changepointBINSEG, main = "BinSeg")
+plot(fit_changepointPELT, main = "PELT")
+plot(fit_changepointAMOC, main = "AMOC")
+plot(fit_changepointSEGN, main = "SegNeig")
+```
+
+
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+#save(parqs, file = "data/parqs999-25.Rda")
+#save(temp, file = "data/temp999-25.Rda")
+      #load("parqsub.Rda")
+      #load("aplsub.Rda")
+```
+
+
+```{r funcaoChangePoint, echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+source("metodoChangePoint.R", local = knitr::knit_global())
+#apls = temp$box_id
+apls = APLs$box_id
+aplssub = apls
+length(APLs)
+length(aplssub)
+```
+
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+#aplssub = aplssub[c(1:9,11:16, 18:20, 22:25, 27,28)]
+save(parq,parq, parqs, apls, aplssub,file = "stuff.RData")
+#load("stuff-DESKTOP-V7N6DRL.RData")
+#load("stuff.RData")
+```
+
+
+```{r chps, echo=TRUE, warning=FALSE, fig.cap="", fig.width=12,out.width = '100%'}
+source("metodoChangePoint.R", local = knitr::knit_global())
+seriesAPLs = data.frame()
+par(mfrow=c(1,1))
+for (i in 1:length(aplssub)) {
+  aAPL = metodoChangePoint(aplssub[i], "PELT", pen.valor =  0.5, penalte =   "AIC")
+  pontual = aAPL@dataframelocal
+  pontual$id = aplssub[i]
+  seriesAPLs = rbind(seriesAPLs, pontual)
+  df = aAPL@dataframelocal
+  if (aAPL@cptns == 1) {
+    pontos = aAPL@cptRes2@cpts
+    dfstart = df[1:(aAPL@cptRes2@cpts/2), ]
+    dfend = df[((aAPL@cptRes2@cpts/2)+1):aAPL@cptRes2@cpts, ]
+    dfstart$periodo = "Start"
+    dfend$periodo = "End"
+    juncao = rbind(dfstart, dfend)
+    anova_a <- aov(y ~ periodo, data = juncao)
+    aov = as.numeric(unlist(summary(anova_a)[[1]])[9])
+    medias <- with(juncao,tapply(y, periodo, mean)) 
+    shapiro=  as.numeric(shapiro.test(resid(anova_a))[[2]]) #P-valor > 0.05 os dadosapresentam Distribuição Nornal
+    levene = as.numeric(leveneTest(resid(anova_a)~periodo, juncao, center=mean)[[3]][[1]]) # P-valor > 0.05 as varianias dos grupos sao homogeneas
+    mannwhitney = wilcox.test(y ~ periodo, data = juncao)$p.value # P-valor > 0.05 as médianas são iguais
+  } else if (aAPL@cptns == 2) {
+    pontos = aAPL@cptRes2@cpts
+    dfstart = df[1:pontos[1],]
+    dfend = df[(pontos[1]+1):pontos[length(pontos)],]
+    dfstart$periodo = "Start"
+    dfend$periodo = "End"
+    juncao = rbind(dfstart, dfend)
+    anova_a <- aov(y ~ periodo, data = juncao)
+    aov = as.numeric(unlist(summary(anova_a)[[1]])[9])
+    medias <- with(juncao,tapply(y, periodo, mean)) 
+    shapiro=  as.numeric(shapiro.test(resid(anova_a))[[2]]) #P-valor > 0.05 os dadosapresentam Distribuição Nornal
+    levene = as.numeric(leveneTest(resid(anova_a)~periodo, juncao, center=mean)[[3]][[1]]) # P-valor > 0.05 as varianias dos grupos sao homogeneas
+    mannwhitney = wilcox.test(y ~ periodo, data = juncao)$p.value # P-valor > 0.05 as médianas são iguais
+  } else if (aAPL@cptns > 2) {
+    pontos = aAPL@cptRes2@cpts
+    dfstart = df[1:pontos[1],]
+    dfend = df[(pontos[length(pontos)-1]+1):pontos[length(pontos)],]
+    dfstart$periodo = "Start"
+    dfend$periodo = "End"
+    juncao = rbind(dfstart, dfend)
+    anova_a <- aov(y ~ periodo, data = juncao)
+    aov = as.numeric(unlist(summary(anova_a)[[1]])[9])
+    medias <- with(juncao,tapply(y, periodo, mean)) 
+    shapiro=  as.numeric(shapiro.test(resid(anova_a))[[2]])
+    levene = as.numeric(leveneTest(resid(anova_a)~periodo, juncao, center=mean)[[3]][[1]])
+    mannwhitney = wilcox.test(y ~ periodo, data = juncao)$p.value
+  }else{
+    aov = 99991
+    shapiro=  9991
+    levene = 9991
+    mannwhitney = 9991
+  }
+  estac = ts(df$y, frequency = 12, start = c(2015, 01))
+  estac = Box.test(estac,type="Ljung-Box")[[3]]
+  df1 <- data.frame(Cluster = aplssub[i], 
+                    Acidentes = aAPL@acidentes, 
+                    VarTotal=aAPL@vartotal,
+                    VarUPS=aAPL@varups, 
+                    VarCPT=aAPL@varcpt, 
+                    AOV=aov, 
+                    Levene=levene, 
+                    Shappiro=shapiro, 
+                    MannWhitney = mannwhitney,
+                    Pontos = length(pontos))
+  resumo = rbind(resumo, df1)
+    if (i < 6) {
+      plot(aAPL@cptRes2, main = paste("ID: ", aplssub[i], ", Freq: ", aAPL@acidentes, ", Acid.: ", round(aAPL@vartotal, 2), ", UPS: ", round(aAPL@varups,2), ", CPT: ", round(aAPL@varcpt,2), ", AOV: ", round(aov,6), ", MH: ", round(mannwhitney,6), sep = ""), ylab="Frequency", xlab="Month")    
+    }
+   # source("plotarIndividuais.R", local = knitr::knit_global()) # Plotar graficos por cluster
+  
+}
+```
+
+
+### Tabela Resumo 
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+#save(resumo, file = "resumo.Rda")
+#load("resumo.Rda")
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+head(resumo)
+nrow(resumo)
+length(aplssub)
+length(APLs)
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+#################################### resumo = resumo %>% filter(VarCPT > -59.61 | is.na(VarCPT))
+#################################### APLs =subset(APLs, box_id %in% resumo$Cluster)
+```
+
+#### Resultadosde ANOVA e Mann-Whitney
+```{r anobamh, echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+resumo$naov = ifelse(resumo$AOV >= 0.05, "Não há Diferença entre médias", "Há Diferença entre médias")
+resumo$nmw = ifelse(resumo$MannWhitney >= 0.05, "Não há Diferença entre médianas", "Há Diferença entre médianas")
+
+estacionarios = resumo[is.na(resumo$VarCPT), ]
+#estacionarios = resumo[resumo$VarCPT ==0, ]
+Nestacionarios = resumo[!is.na(resumo$VarCPT), ]
+nrow(estacionarios)
+nrow(Nestacionarios)
+```
+
+Foram encontrados entre os APLs `r nrow(estacionarios)` locais com média estacioária e `r nrow(Nestacionarios)` não estacionários.  
+
+### Estacionários  
+#### ANOVA
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+table(estacionarios$naov)
+table(estacionarios$naov)[2]/nrow(estacionarios)
+```
+
+#### Mann Whitney
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+table(estacionarios$nmw)
+table(estacionarios$nmw)[2]/nrow(estacionarios)
+```
+
+### Não Estacionários  
+#### ANOVA
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+table(Nestacionarios$naov)
+table(Nestacionarios$naov)[1]/nrow(Nestacionarios)
+```
+
+#### Mann Whitney
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+table(Nestacionarios$nmw)
+table(Nestacionarios$nmw)[1]/nrow(Nestacionarios)
+```
+
+### Tabelas de Contingencia
+#### ANOVA
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+resumo$desfechoaov = ifelse((is.na(resumo$VarCPT)&(resumo$naov == "Não há Diferença entre médias")), 0,1)
+resumo$desfechomw = ifelse(!is.na(resumo$VarCPT)&(resumo$nmw == "Há Diferença entre médianas"), 1,0)
+resumo$predito = ifelse(is.na(resumo$VarCPT), 0,1)
+previsoes = resumo$predito
+aov = resumo$desfechoaov 
+amw = resumo$desfechomw
+library(caret)
+cm = confusionMatrix(table(previsoes, aov, dnn=c("Predito", "Atual")))
+cm
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+source('matriz_confusao.R')
+matriz(cm)
+```
+
+#### Mann-Whitney
+
+```{r cm, echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+cm = confusionMatrix(table(previsoes, amw, dnn=c("Predito", "Atual")))
+cm
+```
+
+
+```{r cmb, echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+matriz(cm)
+```
+
+#### Resumo 
+
+```{r resumo, echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+resumo[, c("VarCPT","AOV", "naov", "nmw", "desfechoaov", "desfechomw", "predito")]
+save(resumo, file = "resumo.Rda")
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+resumo$VarCPT = ifelse(is.na(resumo$VarCPT), 0, resumo$VarCPT)
+resumo$diferenca = resumo$VarCPT - (-59.61)
+resumo$apl = ifelse(resumo$diferenca > 0, 1, 0)
+resumo$apl = ifelse(is.na(resumo$diferenca), 1, resumo$apl) #data.frame
+#resumo = resumo[resumo$apl ==1, ]
+filtrar = resumo$Cluster #SpatialPolygonsDataFram
+ccp <- resumo
+nrow(ccp)
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+row.names(ccp) <- row.names(APLs@data)
+require(maptools)    
+APLs <- spCbind(APLs, ccp)
+APLs$VarCPT = ifelse(is.na(APLs$VarCPT), 0, APLs$VarCPT)
+length(APLs)
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+APLs = APLs[APLs$apl ==1, ]
+length(APLs)
+```
+
+# APLs
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+library(tidyverse)
+dftemp = as.data.frame(cbind(1:nrow(APLs@data), APLs$diferenca))
+dftemp$V2 = as.double(dftemp$V2)
+dftemp = dftemp %>%
+    mutate(quantile = ntile(V2, 20))
+APLs$Quantis = dftemp$quantile
+mapview(APLs, zcol = "diferenca", col.regions=c("orange", "red"))
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+mapview(APLs, zcol = "diferenca", col.regions=c("yellow", "green", "red"))
+```
+
+
+```{r , echo=TRUE, warning=FALSE, fig.cap="", out.width = '100%'}
+mapview(APLs, zcol = "Quantis", col.regions=c("yellow", "green", "red"))
+```
+
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+mapview(APLs[APLs$VarCPT > 0, ], col.regions=c("green"))
+```
+
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+mapview(APLs[APLs$VarCPT == 0, ], col.regions=c("green"))
+```
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+APLs$Level = ifelse(APLs$VarCPT > 0, "Growing", ifelse(APLs$VarCPT < 0, "Decreasing", "Stationary"))
+table(APLs$Level)
+```
+
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+mapview(APLs, zcol = "Level", col.regions=c("yellow","red",  "green"))
+```
+
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+aa = APLs@data
+aaa = aa[aa$VarCPT >0, 1]
+aaa = seriesAPLs[seriesAPLs$id == aaa, ]
+names(aaa) = c("Período", "Ocorências", "Cluster")
+ggplot(aaa,            
+               aes(x = Período,
+                   y = Ocorências,
+                   color = Cluster)) +  geom_line()
+```
+
+
+
+```{r , echo=FALSE, warning=FALSE, fig.cap="", out.width = '100%'}
+aa = APLs@data
+aaa = aa[aa$VarCPT <0, 1]
+aaa = seriesAPLs[seriesAPLs$id == aaa, ]
+names(aaa) = c("Período", "Ocorências", "Cluster")
+ggplot(aaa,            
+               aes(x = Período,
+                   y = Ocorências,
+                   color = Cluster)) +  geom_line()
+```
+
+
